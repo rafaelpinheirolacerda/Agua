@@ -1,0 +1,8 @@
+{
+  "name": "Desafio da Água",
+  "short_name": "Água Duo",
+  "start_url": "/teste.html",
+  "display": "standalone",
+  "background_color": "#e0f2fe",
+  "theme_color": "#e0f2fe",
+}
