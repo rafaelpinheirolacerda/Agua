@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <title>Desafio da Água</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="manifest" href="manifest.webmanifest" />
   <meta name="theme-color" content="#e0f2fe" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     * {
       box-sizing: border-box;
@@ -175,7 +175,6 @@
       filter: brightness(0.96);
     }
 
-    /* Placas douradas (dia e semana) */
     .badges {
       display: flex;
       flex-wrap: wrap;
@@ -212,7 +211,6 @@
       font-weight: 700;
     }
 
-    /* Histórico */
     .history-title {
       margin-top: 20px;
       margin-bottom: 6px;
@@ -353,16 +351,40 @@
     </div>
   </div>
 
-  <script>
-    const STORAGE_KEY = "desafioAguaHistoryV1";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      doc,
+      setDoc,
+      updateDoc,
+      onSnapshot,
+      serverTimestamp,
+      increment
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // --- Funções auxiliares de data e storage ---
+    // 🔴 SUBSTITUA ESTE BLOCO PELO firebaseConfig QUE O FIREBASE TE DEU
+    const firebaseConfig = {
+      apiKey: "AIzaSyBW2CUtP_2KzG4jhutTyRFhhC28WSJ158c",
+      authDomain: "agua-606e1.firebaseapp.com",
+      projectId: "agua-606e1",
+      storageBucket: "agua-606e1.firebasestorage.app",
+      messagingSenderId: "142132177022",
+      appId: "1:142132177022:web:2b4031a24ba9383202102f"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const dailyTotalsCol = collection(db, "dailyTotals");
+
+    // ---- LÓGICA DO APP ----
     function getTodayKey() {
       const d = new Date();
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, "0");
       const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`; // ex: 2025-11-13
+      return `${y}-${m}-${day}`;
     }
 
     function formatDateBr(key) {
@@ -370,238 +392,266 @@
       return `${d}/${m}/${y}`;
     }
 
-    function loadHistory() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : {};
-      } catch (e) {
-        return {};
-      }
+    function parseKeyToDate(key) {
+      const [y, m, d] = key.split("-");
+      return new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
     }
 
-    function saveHistory(history) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-      } catch (e) {
-        console.error("Erro ao salvar histórico:", e);
-      }
-    }
+    let history = {};
 
-    function pruneHistory(history) {
-      // Mantém apenas últimos 28 dias (4 semanas)
-      const now = new Date();
-      const cutoff = new Date();
-      cutoff.setDate(now.getDate() - 27); // hoje + 27 dias pra trás = 28 dias no total
+    window.addEventListener("load", () => {
+      const goalInput = document.getElementById("goalInput");
+      const resetDayBtn = document.getElementById("resetDay");
+      const dailyBadge = document.getElementById("dailyBadge");
+      const weeklyBadge = document.getElementById("weeklyBadge");
 
-      for (const key of Object.keys(history)) {
-        const d = new Date(key);
-        if (isNaN(d.getTime()) || d < cutoff) {
-          delete history[key];
+      const state = {
+        goal: parseInt(goalInput.value, 10) || 2000,
+        players: {
+          1: { total: 0 },
+          2: { total: 0 }
         }
-      }
-    }
-
-    let history = loadHistory();
-
-    const goalInput = document.getElementById("goalInput");
-    const resetDayBtn = document.getElementById("resetDay");
-    const dailyBadge = document.getElementById("dailyBadge");
-    const weeklyBadge = document.getElementById("weeklyBadge");
-
-    const state = {
-      goal: parseInt(goalInput.value, 10) || 2000,
-      players: {
-        1: { total: 0 },
-        2: { total: 0 }
-      }
-    };
-
-    // Carrega valores salvos do dia atual se existirem
-    const todayKey = getTodayKey();
-    if (history[todayKey]) {
-      state.players[1].total = history[todayKey][1] || 0;
-      state.players[2].total = history[todayKey][2] || 0;
-    }
-
-    function saveTodayTotals() {
-      const today = getTodayKey();
-      history[today] = {
-        1: state.players[1].total,
-        2: state.players[2].total
       };
-      pruneHistory(history);
-      saveHistory(history);
-    }
 
-    // Atualiza tabela de histórico (últimas 4 semanas)
-    function updateHistoryUI() {
-      const tbody = document.getElementById("historyBody");
-      const dates = Object.keys(history);
+      function updateDailyBadge() {
+        const t1 = state.players[1].total;
+        const t2 = state.players[2].total;
+        const name1 = document.getElementById("name1").value || "Gabriela";
+        const name2 = document.getElementById("name2").value || "Rafael";
 
-      if (!dates.length) {
-        tbody.innerHTML = '<tr><td colspan="4">Sem dados ainda.</td></tr>';
-        return;
+        if (t1 === 0 && t2 === 0) {
+          dailyBadge.textContent = "Ainda sem dados hoje.";
+        } else if (t1 === t2) {
+          dailyBadge.textContent = "Empate hoje! Continuem bebendo água 😄";
+        } else if (t1 > t2) {
+          dailyBadge.innerHTML = `🏆 <span class="name">${name1}</span> está na frente hoje (${t1} ml vs ${t2} ml)`;
+        } else {
+          dailyBadge.innerHTML = `🏆 <span class="name">${name2}</span> está na frente hoje (${t2} ml vs ${t1} ml)`;
+        }
       }
 
-      dates.sort((a, b) => b.localeCompare(a)); // mais recente primeiro
-      const rows = [];
+      function updateUI() {
+        const goal = state.goal;
 
-      dates.forEach((dateKey) => {
-        const data = history[dateKey] || {};
-        const g = data[1] || 0;
-        const r = data[2] || 0;
+        [1, 2].forEach((id) => {
+          const total = state.players[id].total;
+          const totalSpan = document.getElementById("total" + id);
+          const bar = document.getElementById("bar" + id);
+          const progressText = document.getElementById("progressText" + id);
 
-        let winnerLabel = "-";
-        let winnerIcon = "";
-        if (g === 0 && r === 0) {
-          winnerLabel = "Sem registro";
-        } else if (g === r) {
-          winnerLabel = "Empate";
-        } else if (g > r) {
-          winnerLabel = "Gabriela";
-          winnerIcon = "🏆";
-        } else {
-          winnerLabel = "Rafael";
-          winnerIcon = "🏆";
+          totalSpan.textContent = total;
+
+          const pct = goal > 0 ? Math.min(100, Math.round((total / goal) * 100)) : 0;
+          bar.style.width = pct + "%";
+          progressText.textContent = pct + "% da meta";
+        });
+
+        updateDailyBadge();
+      }
+
+      function updateHistoryUI() {
+        const tbody = document.getElementById("historyBody");
+        const dates = Object.keys(history);
+
+        if (!dates.length) {
+          tbody.innerHTML = '<tr><td colspan="4">Sem dados ainda.</td></tr>';
+          return;
         }
 
-        rows.push(
-          `<tr>
-            <td>${formatDateBr(dateKey)}</td>
-            <td>${g}</td>
-            <td>${r}</td>
-            <td class="winner-cell">${winnerIcon} ${winnerLabel}</td>
-          </tr>`
-        );
-      });
+        dates.sort((a, b) => b.localeCompare(a)); // mais recente primeiro
 
-      tbody.innerHTML = rows.join("");
-    }
+        const now = new Date();
+        const cutoff = new Date();
+        cutoff.setDate(now.getDate() - 27); // últimos 28 dias
 
-    // Atualiza vencedor da semana (últimos 7 dias)
-    function updateWeeklyWinner() {
-      const now = new Date();
-      const cutoff = new Date();
-      cutoff.setDate(now.getDate() - 6); // últimos 7 dias
+        const rows = [];
 
-      let total1 = 0;
-      let total2 = 0;
+        dates.forEach((dateKey) => {
+          const d = parseKeyToDate(dateKey);
+          if (d < cutoff) return;
 
-      for (const [key, data] of Object.entries(history)) {
-        const d = new Date(key);
-        if (isNaN(d.getTime())) continue;
-        if (d >= cutoff && d <= now) {
+          const data = history[dateKey] || {};
+          const g = data[1] || 0;
+          const r = data[2] || 0;
+
+          let winnerLabel = "-";
+          let winnerIcon = "";
+          if (g === 0 && r === 0) {
+            winnerLabel = "Sem registro";
+          } else if (g === r) {
+            winnerLabel = "Empate";
+          } else if (g > r) {
+            winnerLabel = "Gabriela";
+            winnerIcon = "🏆";
+          } else {
+            winnerLabel = "Rafael";
+            winnerIcon = "🏆";
+          }
+
+          rows.push(
+            `<tr>
+              <td>${formatDateBr(dateKey)}</td>
+              <td>${g}</td>
+              <td>${r}</td>
+              <td class="winner-cell">${winnerIcon} ${winnerLabel}</td>
+            </tr>`
+          );
+        });
+
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="4">Sem dados recentes.</td></tr>';
+        } else {
+          tbody.innerHTML = rows.join("");
+        }
+      }
+
+      function updateWeeklyWinner() {
+        const now = new Date();
+        const cutoff = new Date();
+        cutoff.setDate(now.getDate() - 6); // últimos 7 dias
+
+        let total1 = 0;
+        let total2 = 0;
+
+        Object.entries(history).forEach(([key, data]) => {
+          const d = parseKeyToDate(key);
+          if (d < cutoff || d > now) return;
           total1 += data[1] || 0;
           total2 += data[2] || 0;
+        });
+
+        const name1 = document.getElementById("name1").value || "Gabriela";
+        const name2 = document.getElementById("name2").value || "Rafael";
+
+        if (total1 === 0 && total2 === 0) {
+          weeklyBadge.textContent = "Sem dados suficientes ainda.";
+        } else if (total1 === total2) {
+          weeklyBadge.textContent = "Empate na semana! 😄";
+        } else if (total1 > total2) {
+          weeklyBadge.innerHTML = `🏆 <span class="name">${name1}</span> está vencendo na semana (${total1} ml vs ${total2} ml)`;
+        } else {
+          weeklyBadge.innerHTML = `🏆 <span class="name">${name2}</span> está vencendo na semana (${total2} ml vs ${total1} ml)`;
         }
       }
 
-      const name1 = document.getElementById("name1").value || "Gabriela";
-      const name2 = document.getElementById("name2").value || "Rafael";
+      async function addWaterFirestore(playerId, inc) {
+        const todayKey = getTodayKey();
+        const docRef = doc(dailyTotalsCol, todayKey);
+        const field = playerId === 1 ? "total1" : "total2";
 
-      if (total1 === 0 && total2 === 0) {
-        weeklyBadge.textContent = "Sem dados suficientes ainda.";
-      } else if (total1 === total2) {
-        weeklyBadge.textContent = "Empate na semana! 😄";
-      } else if (total1 > total2) {
-        weeklyBadge.innerHTML = `🏆 <span class="name">${name1}</span> está vencendo na semana (${total1} ml vs ${total2} ml)`;
-      } else {
-        weeklyBadge.innerHTML = `🏆 <span class="name">${name2}</span> está vencendo na semana (${total2} ml vs ${total1} ml)`;
-      }
-    }
-
-    function updateDailyBadge() {
-      const t1 = state.players[1].total;
-      const t2 = state.players[2].total;
-      const name1 = document.getElementById("name1").value || "Gabriela";
-      const name2 = document.getElementById("name2").value || "Rafael";
-
-      if (t1 === 0 && t2 === 0) {
-        dailyBadge.textContent = "Ainda sem dados hoje.";
-      } else if (t1 === t2) {
-        dailyBadge.textContent = "Empate hoje! Continuem bebendo água 😄";
-      } else if (t1 > t2) {
-        dailyBadge.innerHTML = `🏆 <span class="name">${name1}</span> está na frente hoje (${t1} ml vs ${t2} ml)`;
-      } else {
-        dailyBadge.innerHTML = `🏆 <span class="name">${name2}</span> está na frente hoje (${t2} ml vs ${t1} ml)`;
-      }
-    }
-
-    function updateUI() {
-      const goal = state.goal;
-
-      [1, 2].forEach((id) => {
-        const total = state.players[id].total;
-        const totalSpan = document.getElementById("total" + id);
-        const bar = document.getElementById("bar" + id);
-        const progressText = document.getElementById("progressText" + id);
-
-        totalSpan.textContent = total;
-
-        const pct = goal > 0 ? Math.min(100, Math.round((total / goal) * 100)) : 0;
-        bar.style.width = pct + "%";
-        progressText.textContent = pct + "% da meta";
-      });
-
-      updateDailyBadge();
-    }
-
-    function refreshAll() {
-      saveTodayTotals();
-      updateUI();
-      updateHistoryUI();
-      updateWeeklyWinner();
-    }
-
-    // Atualiza meta
-    goalInput.addEventListener("input", () => {
-      const value = parseInt(goalInput.value, 10);
-      if (!isNaN(value) && value > 0) {
-        state.goal = value;
+        // Atualiza localmente para sensação imediata
+        state.players[playerId].total = Math.max(0, state.players[playerId].total + inc);
         updateUI();
-      }
-    });
 
-    // Botões de cada jogador
-    document.querySelectorAll(".card").forEach((card) => {
-      const playerId = parseInt(card.getAttribute("data-player"), 10);
-      card.querySelectorAll(".btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const inc = parseInt(btn.getAttribute("data-inc"), 10);
-          const current = state.players[playerId].total;
-          const next = Math.max(0, current + inc); // nunca negativo
-          state.players[playerId].total = next;
-          refreshAll();
+        try {
+          await setDoc(
+            docRef,
+            {
+              dateKey: todayKey,
+              createdAt: serverTimestamp()
+            },
+            { merge: true }
+          );
+
+          await updateDoc(docRef, {
+            [field]: increment(inc),
+            updatedAt: serverTimestamp()
+          });
+        } catch (e) {
+          console.error("Erro ao atualizar Firestore:", e);
+        }
+      }
+
+      async function resetToday() {
+        const todayKey = getTodayKey();
+        const docRef = doc(dailyTotalsCol, todayKey);
+
+        state.players[1].total = 0;
+        state.players[2].total = 0;
+        updateUI();
+
+        try {
+          await setDoc(
+            docRef,
+            {
+              dateKey: todayKey,
+              total1: 0,
+              total2: 0,
+              updatedAt: serverTimestamp()
+            },
+            { merge: true }
+          );
+        } catch (e) {
+          console.error("Erro ao resetar Firestore:", e);
+        }
+      }
+
+      function subscribeHistory() {
+        onSnapshot(dailyTotalsCol, (snapshot) => {
+          const newHistory = {};
+          snapshot.forEach((docSnap) => {
+            const key = docSnap.id;
+            const data = docSnap.data();
+            newHistory[key] = {
+              1: data.total1 || 0,
+              2: data.total2 || 0
+            };
+          });
+          history = newHistory;
+
+          const todayKey = getTodayKey();
+          if (history[todayKey]) {
+            state.players[1].total = history[todayKey][1] || 0;
+            state.players[2].total = history[todayKey][2] || 0;
+          } else {
+            state.players[1].total = 0;
+            state.players[2].total = 0;
+          }
+
+          updateUI();
+          updateHistoryUI();
+          updateWeeklyWinner();
+        });
+      }
+
+      // Meta diária
+      goalInput.addEventListener("input", () => {
+        const value = parseInt(goalInput.value, 10);
+        if (!isNaN(value) && value > 0) {
+          state.goal = value;
+          updateUI();
+        }
+      });
+
+      // Botões de cada jogador
+      document.querySelectorAll(".card").forEach((card) => {
+        const playerId = parseInt(card.getAttribute("data-player"), 10);
+        card.querySelectorAll(".btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const inc = parseInt(btn.getAttribute("data-inc"), 10);
+            addWaterFirestore(playerId, inc);
+          });
         });
       });
-    });
 
-    // Reset do dia (zera somente o dia atual, mas mantém histórico passado)
-    resetDayBtn.addEventListener("click", () => {
-      state.players[1].total = 0;
-      state.players[2].total = 0;
-      refreshAll();
-    });
+      // Reset do dia
+      resetDayBtn.addEventListener("click", () => {
+        resetToday();
+      });
 
-    // Inicializa UI com o que já tiver salvo
-    updateUI();
-    updateHistoryUI();
-    updateWeeklyWinner();
+      // Inicia
+      updateUI();
+      subscribeHistory();
+
+      // Service worker (PWA)
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker
+          .register("service-worker.js")
+          .catch((err) => console.log("Falha ao registrar service worker:", err));
+      }
+    });
   </script>
-  
-  <script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", function () {
-      navigator.serviceWorker
-        .register("service-worker.js")
-        .catch(function (err) {
-          console.log("Falha ao registrar service worker:", err);
-        });
-    });
-  }
-</script>
 </body>
 </html>
+
 
